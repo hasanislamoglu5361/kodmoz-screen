@@ -1,0 +1,22 @@
+.DS_Store
+build/
+.build/
+*.xcodeproj
+*.xcworkspace
+
+# Android
+android/.gradle/
+android/.kotlin/
+android/local.properties
+android/app/build/
+android/build/
+android/captures/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# editors
+.idea/
+.vscode/
+*.swp

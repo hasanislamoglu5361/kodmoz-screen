@@ -1,0 +1,113 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Swift sürümü
+        run: swift --version
+
+      - name: Derle (.app, evrensel)
+        run: ./scripts/build.sh --universal
+
+      - name: Paketi doğrula
+        run: |
+          APP="build/Kodmoz Screen.app"
+          test -x "$APP/Contents/MacOS/KodmozScreen"
+          test -f "$APP/Contents/Info.plist"
+          test -f "$APP/Contents/Resources/AppIcon.icns"
+          codesign --verify --strict "$APP"
+          archs="$(lipo -archs "$APP/Contents/MacOS/KodmozScreen")"
+          echo "mimari: $archs"
+          case "$archs" in *arm64*) ;; *) echo "arm64 eksik"; exit 1 ;; esac
+          case "$archs" in *x86_64*) ;; *) echo "x86_64 eksik"; exit 1 ;; esac
+
+      - name: İkon üretimini doğrula
+        run: |
+          "build/Kodmoz Screen.app/Contents/MacOS/KodmozScreen" --make-icon "$PWD/build/icon-check"
+          test -f "build/icon-check/AppIcon.iconset/icon_512x512@2x.png"
+          echo "OK"
+
+      - name: Paketle
+        run: |
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent "Kodmoz Screen.app" "KodmozScreen-macos.zip"
+          shasum -a 256 KodmozScreen-macos.zip > KodmozScreen-macos.zip.sha256
+          ls -lh KodmozScreen-macos.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            build/KodmozScreen-macos.zip
+            build/KodmozScreen-macos.zip.sha256
+          retention-days: 14
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: SDK paketleri
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-37.0" "build-tools;37.0.0" "platform-tools"
+
+      - name: Gradle
+        run: |
+          cd android
+          ./gradlew :app:assembleDebug --no-daemon --console=plain
+
+      - name: APK'yı doğrula
+        run: |
+          test -f android/app/build/outputs/apk/debug/app-debug.apk
+          ls -lh android/app/build/outputs/apk/debug/app-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: APK'yı yeniden adlandır
+        run: cp dist/app-debug.apk dist/KodmozScreen-android-debug.apk
+
+      - name: Yayınla
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/KodmozScreen-macos.zip
+            dist/KodmozScreen-macos.zip.sha256
+            dist/KodmozScreen-android-debug.apk
+          generate_release_notes: true
